@@ -20,7 +20,7 @@ contract SmartContractWallet {
 
     mapping(uint256 => mapping(address => bool)) public voted;
 
-    // --- Reentrancy guard ---
+    // --- Reentrancy guard (simples) ---
     uint256 private _locked = 0;
     modifier nonReentrant() {
         require(_locked == 0, "Reentrancy");
@@ -125,8 +125,8 @@ contract SmartContractWallet {
             require(newOwner == proposedOwner, "Active proposal locked");
         }
 
-        require(!nextOwnerGuardianVotedBool[nextOwner][msg.sender], "You already voted, aborting");
-        nextOwnerGuardianVotedBool[nextOwner][msg.sender] = true; 
+        require(!voted[proposalId][msg.sender], "Already voted");
+        voted[proposalId][msg.sender] = true;
 
         proposalVotes++;
         emit OwnerVote(proposalId, msg.sender, proposalVotes);
@@ -152,7 +152,9 @@ contract SmartContractWallet {
         require(to != address(0), "Invalid recipient");
         require(address(this).balance >= value, "Insufficient balance");
 
-        allowance[_for] = _amount;
+        if (msg.sender != owner) {
+            require(data.length == 0, "Spender: data not allowed");
+            require(to.code.length == 0, "Spender: contracts not allowed");
 
             uint256 current = allowance[msg.sender];
             require(current >= value, "Exceeds allowance");
@@ -177,4 +179,3 @@ contract SmartContractWallet {
         emit Deposit(msg.sender, msg.value, address(this).balance);
     }
 }
-
