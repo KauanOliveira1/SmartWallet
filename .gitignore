@@ -1,0 +1,44 @@
+# ===== Remix / Solidity artifacts =====
+artifacts/
+cache/
+.deps/
+.states/
+build/
+dist/
+out/
+
+# ===== Logs =====
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===== OS / Editor =====
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ===== Environment files =====
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+*.keystore
+
+# ===== Node =====
+node_modules/
+
+# ===== Hardhat =====
+typechain/
+coverage/
+coverage.json
+gasReporterOutput.json
+
+# ===== Foundry =====
+forge-cache/
+broadcast/
