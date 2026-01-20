@@ -35,7 +35,7 @@ contract SmartContractWallet {
         }
 
         require(!nextOwnerGuardianVotedBool[nextOwner][msg.sender], "You already voted, aborting");
-        nextOwnerGuardianVotedBool[nextOwner][msg.sender] = true; // ✅ grava voto
+        nextOwnerGuardianVotedBool[nextOwner][msg.sender] = true; 
 
         guardiansResetCount++;
 
@@ -50,7 +50,7 @@ contract SmartContractWallet {
         require(msg.sender == owner, "You are not the owner, aborting");
         require(_for != address(0), "Invalid address");
 
-        allowance[_for] = _amount; // ✅ chave correta
+        allowance[_for] = _amount;
 
         isAllowedToSend[_for] = (_amount > 0);
     }
@@ -74,3 +74,4 @@ contract SmartContractWallet {
 
     receive() external payable {}
 }
+
