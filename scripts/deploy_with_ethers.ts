@@ -4,11 +4,11 @@
 
 import { deploy } from './ethers-lib'
 
-(async () => {
+;(async () => {
   try {
-    const result = await deploy('Storage', [])
+    const result = await deploy('SmartContractWallet', [])
     console.log(`address: ${result.address}`)
-  } catch (e) {
+  } catch (e: any) {
     console.log(e.message)
   }
 })()
