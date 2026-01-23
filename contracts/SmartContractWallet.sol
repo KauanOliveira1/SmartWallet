@@ -21,7 +21,7 @@ contract SmartContractWallet {
     // proposalId => guardian => voted?
     mapping(uint256 => mapping(address => bool)) public voted;
 
-    // --- Reentrancy guard ---
+    // --- Reentrancy guard (simples) ---
     uint256 private _locked = 0;
     modifier nonReentrant() {
         require(_locked == 0, "Reentrancy");

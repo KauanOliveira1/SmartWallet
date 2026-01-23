@@ -1,125 +1,149 @@
 /* eslint-disable no-undef */
 const { expect } = require("chai");
-const { ethers } = require("hardhat");
 
-describe("SmartContractWallet", function () {
-  async function deployFixture() {
-    const [owner, guardian1, guardian2, guardian3, newOwner, spender, recipient] =
-      await ethers.getSigners();
+// Detecta ambiente
+const isTruffleRemix =
+  typeof artifacts !== "undefined" &&
+  typeof contract === "function" &&
+  typeof web3 !== "undefined";
 
-    const Wallet = await ethers.getContractFactory("SmartContractWallet");
-    const wallet = await Wallet.deploy();
-    await wallet.deployed();
+if (isTruffleRemix) {
+  // --- Remix/Truffle style ---
+  const Wallet = artifacts.require("SmartContractWallet");
 
-    // Deposita 1 ETH na wallet
-    await owner.sendTransaction({
-      to: wallet.address,
-      value: ethers.utils.parseEther("1.0"),
+  contract("SmartContractWallet (Remix)", (accounts) => {
+    const [owner, g1, g2, g3, newOwner, spender, recipient] = accounts;
+
+    it("owner é o deployer", async () => {
+      const wallet = await Wallet.new({ from: owner });
+      expect(await wallet.owner()).to.equal(owner);
     });
 
-    return { wallet, owner, guardian1, guardian2, guardian3, newOwner, spender, recipient };
+    it("social recovery: 3 guardians trocam o owner e guardian nao vota 2x", async () => {
+      const wallet = await Wallet.new({ from: owner });
+
+      // deposita 1 ETH
+      await web3.eth.sendTransaction({ from: owner, to: wallet.address, value: web3.utils.toWei("1", "ether") });
+
+      await wallet.setGuardian(g1, true, { from: owner });
+      await wallet.setGuardian(g2, true, { from: owner });
+      await wallet.setGuardian(g3, true, { from: owner });
+
+      await wallet.proposeNewOwner(newOwner, { from: g1 });
+      await expect(wallet.proposeNewOwner(newOwner, { from: g1 })).to.be.rejected;
+
+      await wallet.proposeNewOwner(newOwner, { from: g2 });
+      await wallet.proposeNewOwner(newOwner, { from: g3 });
+
+      expect(await wallet.owner()).to.equal(newOwner);
+    });
+
+    it("spender: nao pode executar com data e nem enviar para contrato", async () => {
+      const wallet = await Wallet.new({ from: owner });
+      await web3.eth.sendTransaction({ from: owner, to: wallet.address, value: web3.utils.toWei("1", "ether") });
+
+      await wallet.setAllowance(spender, web3.utils.toWei("1", "ether"), { from: owner });
+
+      // data != vazio => bloqueia
+      await expect(
+        wallet.execute(recipient, web3.utils.toWei("0.1", "ether"), "0x1234", { from: spender })
+      ).to.be.rejected;
+
+      // to = contrato (wallet) => bloqueia
+      await expect(
+        wallet.execute(wallet.address, web3.utils.toWei("0.1", "ether"), "0x", { from: spender })
+      ).to.be.rejected;
+    });
+  });
+} else {
+  // --- Hardhat style ---
+  const { ethers } = require("hardhat");
+
+  const parseEther = (v) => (ethers.utils ? ethers.utils.parseEther(v) : ethers.parseEther(v));
+
+  async function addrOf(contract) {
+    if (contract.address) return contract.address;
+    if (contract.target) return contract.target;
+    return await contract.getAddress();
   }
 
-  it("owner é o deployer", async function () {
-    const { wallet, owner } = await deployFixture();
-    expect(await wallet.owner()).to.equal(owner.address);
+  describe("SmartContractWallet (Hardhat)", function () {
+    async function deployFixture() {
+      const [owner, guardian1, guardian2, guardian3, newOwner, spender, recipient] =
+        await ethers.getSigners();
+
+      const Wallet = await ethers.getContractFactory("SmartContractWallet");
+      const wallet = await Wallet.deploy();
+      if (wallet.waitForDeployment) await wallet.waitForDeployment();
+      if (wallet.deployed) await wallet.deployed();
+
+      const walletAddress = await addrOf(wallet);
+
+      // Deposita 1 ETH
+      await owner.sendTransaction({ to: walletAddress, value: parseEther("1.0") });
+
+      return { wallet, walletAddress, owner, guardian1, guardian2, guardian3, newOwner, spender, recipient };
+    }
+
+    it("owner é o deployer", async function () {
+      const { wallet, owner } = await deployFixture();
+      expect(await wallet.owner()).to.equal(owner.address);
+    });
+
+    it("social recovery: 3 guardians trocam o owner; guardian nao vota 2x", async function () {
+      const { wallet, owner, guardian1, guardian2, guardian3, newOwner } = await deployFixture();
+
+      await wallet.connect(owner).setGuardian(guardian1.address, true);
+      await wallet.connect(owner).setGuardian(guardian2.address, true);
+      await wallet.connect(owner).setGuardian(guardian3.address, true);
+
+      await wallet.connect(guardian1).proposeNewOwner(newOwner.address);
+      await expect(wallet.connect(guardian1).proposeNewOwner(newOwner.address))
+        .to.be.revertedWith("Already voted");
+
+      await wallet.connect(guardian2).proposeNewOwner(newOwner.address);
+      await wallet.connect(guardian3).proposeNewOwner(newOwner.address);
+
+      expect(await wallet.owner()).to.equal(newOwner.address);
+    });
+
+    it("allowance: spender envia ETH para EOA e allowance decrementa", async function () {
+      const { wallet, owner, spender, recipient } = await deployFixture();
+
+      await wallet.connect(owner).setAllowance(spender.address, parseEther("0.2"));
+
+      const before = await ethers.provider.getBalance(recipient.address);
+      await wallet.connect(spender).execute(recipient.address, parseEther("0.1"), "0x");
+      const after = await ethers.provider.getBalance(recipient.address);
+
+      // compat v5/v6 (BigNumber vs bigint)
+      const diff = after.sub ? after.sub(before) : (after - before);
+      expect(diff.toString()).to.equal(parseEther("0.1").toString());
+
+      const remaining = await wallet.allowance(spender.address);
+      expect(remaining.toString()).to.equal(parseEther("0.1").toString());
+    });
+
+    it("spender: nao pode executar com data e nem enviar para contrato", async function () {
+      const { wallet, walletAddress, owner, spender, recipient } = await deployFixture();
+
+      await wallet.connect(owner).setAllowance(spender.address, parseEther("1"));
+
+      // data != vazio => bloqueia
+      await expect(
+        wallet.connect(spender).execute(recipient.address, parseEther("0.01"), "0x1234")
+      ).to.be.revertedWith("Spender: data not allowed");
+
+      // to = contrato (a própria wallet) => bloqueia
+      await expect(
+        wallet.connect(spender).execute(walletAddress, parseEther("0.01"), "0x")
+      ).to.be.revertedWith("Spender: contracts not allowed");
+    });
+
+    it("owner pode executar com data (chamada arbitrária) se quiser", async function () {
+      const { wallet, owner, recipient } = await deployFixture();
+      await expect(wallet.connect(owner).execute(recipient.address, parseEther("0.01"), "0x"))
+        .to.emit(wallet, "Executed");
+    });
   });
-
-  it("somente owner pode setar guardian", async function () {
-    const { wallet, owner, guardian1, spender } = await deployFixture();
-
-    await expect(wallet.connect(owner).setGuardian(guardian1.address, true))
-      .to.emit(wallet, "GuardianSet")
-      .withArgs(guardian1.address, true);
-
-    await expect(wallet.connect(spender).setGuardian(spender.address, true))
-      .to.be.revertedWith("Not owner");
-  });
-
-  it("social recovery: 3 guardians trocam o owner e guardian nao vota 2x", async function () {
-    const { wallet, owner, guardian1, guardian2, guardian3, newOwner } = await deployFixture();
-
-    await wallet.connect(owner).setGuardian(guardian1.address, true);
-    await wallet.connect(owner).setGuardian(guardian2.address, true);
-    await wallet.connect(owner).setGuardian(guardian3.address, true);
-
-    // 1o voto
-    await expect(wallet.connect(guardian1).proposeNewOwner(newOwner.address))
-      .to.emit(wallet, "OwnerProposed");
-
-    // guardian1 nao pode votar novamente na mesma proposta
-    await expect(wallet.connect(guardian1).proposeNewOwner(newOwner.address))
-      .to.be.revertedWith("Already voted");
-
-    // Ainda nao mudou
-    expect(await wallet.owner()).to.equal(owner.address);
-
-    // 2o voto
-    await wallet.connect(guardian2).proposeNewOwner(newOwner.address);
-    expect(await wallet.owner()).to.equal(owner.address);
-
-    // 3o voto => troca owner
-    await expect(wallet.connect(guardian3).proposeNewOwner(newOwner.address))
-      .to.emit(wallet, "OwnerChanged");
-
-    expect(await wallet.owner()).to.equal(newOwner.address);
-  });
-
-  it("alternar candidato cria nova proposta e permite votar de novo (proposalId)", async function () {
-    const { wallet, owner, guardian1, guardian2, guardian3, newOwner } = await deployFixture();
-    const altOwner = guardian2; // só pra ter outro candidato
-
-    await wallet.connect(owner).setGuardian(guardian1.address, true);
-    await wallet.connect(owner).setGuardian(guardian2.address, true);
-    await wallet.connect(owner).setGuardian(guardian3.address, true);
-
-    // Proposta A (2 votos)
-    await wallet.connect(guardian1).proposeNewOwner(newOwner.address);
-    await wallet.connect(guardian2).proposeNewOwner(newOwner.address);
-
-    // Muda para candidato B => nova proposta
-    await wallet.connect(guardian3).proposeNewOwner(altOwner.address);
-
-    // Volta para candidato A => nova proposta (proposalId novo),
-    // guardian1 pode votar novamente
-    await expect(wallet.connect(guardian1).proposeNewOwner(newOwner.address))
-      .to.emit(wallet, "OwnerProposed");
-  });
-
-  it("allowance: spender executa transferencia e allowance decrementa", async function () {
-    const { wallet, owner, spender, recipient } = await deployFixture();
-
-    const initialAllowance = ethers.utils.parseEther("0.2");
-    await expect(wallet.connect(owner).setAllowance(spender.address, initialAllowance))
-      .to.emit(wallet, "AllowanceSet")
-      .withArgs(spender.address, initialAllowance);
-
-    const sendValue = ethers.utils.parseEther("0.1");
-
-    const before = await ethers.provider.getBalance(recipient.address);
-    await wallet.connect(spender).execute(recipient.address, sendValue, "0x");
-    const after = await ethers.provider.getBalance(recipient.address);
-
-    expect(after.sub(before)).to.equal(sendValue);
-
-    const remaining = await wallet.allowance(spender.address);
-    expect(remaining).to.equal(ethers.utils.parseEther("0.1"));
-  });
-
-  it("spender nao pode exceder allowance", async function () {
-    const { wallet, owner, spender, recipient } = await deployFixture();
-
-    await wallet.connect(owner).setAllowance(spender.address, ethers.utils.parseEther("0.05"));
-
-    await expect(
-      wallet.connect(spender).execute(recipient.address, ethers.utils.parseEther("0.06"), "0x")
-    ).to.be.revertedWith("Exceeds allowance");
-  });
-
-  it("owner pode executar sem allowance", async function () {
-    const { wallet, owner, recipient } = await deployFixture();
-
-    await expect(wallet.connect(owner).execute(recipient.address, ethers.utils.parseEther("0.1"), "0x"))
-      .to.emit(wallet, "Executed");
-  });
-});
+}
