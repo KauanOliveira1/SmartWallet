@@ -18,6 +18,7 @@ contract SmartContractWallet {
     uint256 public proposalVotes;
     uint256 public proposalCreatedAt;
 
+    // proposalId => guardian => voted?
     mapping(uint256 => mapping(address => bool)) public voted;
 
     // --- Reentrancy guard ---
@@ -101,7 +102,9 @@ contract SmartContractWallet {
         require(spender != address(0), "Invalid spender");
         uint256 current = allowance[spender];
         require(current >= subtracted, "Below zero");
-        unchecked { allowance[spender] = current - subtracted; }
+        unchecked {
+            allowance[spender] = current - subtracted;
+        }
         emit AllowanceSet(spender, allowance[spender]);
     }
 
@@ -110,6 +113,7 @@ contract SmartContractWallet {
         require(newOwner != address(0), "New owner cannot be zero");
 
         if (!proposalActive()) {
+            // abre nova proposta
             proposalId++;
             proposedOwner = newOwner;
             proposalVotes = 0;
@@ -122,11 +126,12 @@ contract SmartContractWallet {
                 proposalCreatedAt + PROPOSAL_TTL
             );
         } else {
+            // se já existe proposta ativa, não deixa trocar o candidato no meio
             require(newOwner == proposedOwner, "Active proposal locked");
         }
 
-        require(!nextOwnerGuardianVotedBool[nextOwner][msg.sender], "You already voted, aborting");
-        nextOwnerGuardianVotedBool[nextOwner][msg.sender] = true; 
+        require(!voted[proposalId][msg.sender], "Already voted");
+        voted[proposalId][msg.sender] = true;
 
         proposalVotes++;
         emit OwnerVote(proposalId, msg.sender, proposalVotes);
@@ -135,6 +140,7 @@ contract SmartContractWallet {
             address payable oldOwner = owner;
             owner = proposedOwner;
 
+            // encerra a proposta
             proposedOwner = payable(address(0));
             proposalVotes = 0;
             proposalCreatedAt = 0;
@@ -152,11 +158,13 @@ contract SmartContractWallet {
         require(to != address(0), "Invalid recipient");
         require(address(this).balance >= value, "Insufficient balance");
 
-        allowance[_for] = _amount;
-
+        // Se não for o owner, consome allowance
+        if (msg.sender != owner) {
             uint256 current = allowance[msg.sender];
             require(current >= value, "Exceeds allowance");
-            unchecked { allowance[msg.sender] = current - value; }
+            unchecked {
+                allowance[msg.sender] = current - value;
+            }
         }
 
         (bool ok, bytes memory result) = to.call{value: value}(data);
@@ -177,4 +185,3 @@ contract SmartContractWallet {
         emit Deposit(msg.sender, msg.value, address(this).balance);
     }
 }
-
